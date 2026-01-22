@@ -9,6 +9,40 @@ This project provides two proxy binaries that sit between clients and ArangoDB, 
 - **roproxy** (Read-Only Proxy): Allows only read operations
 - **rwproxy** (Read-Write Proxy): Allows read operations plus document CRUD, imports, and collection/index management
 
+## Why Unix Sockets?
+
+**Because sub-millisecond latency matters.**
+
+When you're running ArangoDB locally for GraphRAG, vector search, or any latency-sensitive workload, every millisecond counts. TCP/IP adds overhead you don't need when the database is on the same machine:
+
+| Connection Type | Typical Latency | Why |
+|-----------------|-----------------|-----|
+| TCP localhost | 0.1-0.5ms | Loopback still traverses the full network stack |
+| Unix socket | 0.01-0.05ms | Direct IPC, no network stack overhead |
+
+That's roughly **10x faster** for each round-trip. For a GraphRAG query that makes dozens of graph traversals and vector lookups, this adds up fast.
+
+### Real-World Use Case: Local GraphRAG
+
+If you're running an AI agent that:
+- Retrieves context from a knowledge graph
+- Performs vector similarity searches
+- Traverses relationships to build context
+- Does all of this multiple times per user query
+
+...then you want the absolute lowest latency path to your database. Unix sockets eliminate the network stack entirely, giving you bare-metal IPC performance.
+
+### But Why a Proxy?
+
+ArangoDB exposes its Unix socket directly, so why add a proxy? **Access control.**
+
+- Give your AI agent read-only access (can't accidentally `DROP` your knowledge base)
+- Give your ingestion pipeline read-write access to specific APIs
+- Use Unix file permissions to control which processes can connect
+- Block dangerous operations at the proxy level, not just in application code
+
+Defense in depth, with negligible overhead.
+
 ## Installation
 
 ```bash
