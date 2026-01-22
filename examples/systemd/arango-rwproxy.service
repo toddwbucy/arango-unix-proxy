@@ -1,0 +1,45 @@
+[Unit]
+Description=ArangoDB Read-Write Unix Socket Proxy
+Documentation=https://github.com/r3d91ll/arango-unix-proxy
+After=arangodb3.service
+Requires=arangodb3.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/rwproxy
+Restart=always
+RestartSec=5
+
+# Socket configuration
+Environment=LISTEN_SOCKET=/run/arango-proxy/readwrite.sock
+Environment=UPSTREAM_SOCKET=/run/arangodb3/arangodb.sock
+Environment=PROXY_CLIENT_TIMEOUT_SECONDS=120
+Environment=PROXY_DIAL_TIMEOUT_SECONDS=10
+
+# Runtime directory
+RuntimeDirectory=arango-proxy
+RuntimeDirectoryMode=0750
+
+# Security hardening
+User=arango-proxy
+Group=arango-proxy
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+
+# Allow access to ArangoDB socket
+ReadWritePaths=/run/arangodb3
+
+[Install]
+WantedBy=multi-user.target

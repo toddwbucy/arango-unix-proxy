@@ -1,0 +1,16 @@
+# Binaries
+bin/
+*.exe
+
+# Claude Code project instructions (private)
+CLAUDE.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
