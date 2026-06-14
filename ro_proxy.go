@@ -11,7 +11,9 @@ import (
 )
 
 // ForbiddenAQLKeywords are AQL keywords that indicate write operations.
-// These are blocked in read-only mode.
+// These are blocked in read-only mode. It is the single source of truth for
+// the blocklist: both the tokenized JSON-path check and the raw-body fallback
+// scan iterate this map.
 var ForbiddenAQLKeywords = map[string]struct{}{
 	"INSERT":   {},
 	"UPDATE":   {},
@@ -21,9 +23,6 @@ var ForbiddenAQLKeywords = map[string]struct{}{
 	"TRUNCATE": {},
 	"DROP":     {},
 }
-
-// forbiddenKeywordsList is used for fallback scanning when JSON parsing fails.
-var forbiddenKeywordsList = []string{"INSERT", "UPDATE", "UPSERT", "REMOVE", "REPLACE", "TRUNCATE", "DROP"}
 
 // RunReadOnlyProxy starts the read-only proxy server.
 // It blocks until the server stops or encounters a fatal error.
@@ -92,7 +91,7 @@ func AllowReadOnly(r *http.Request, peek BodyPeeker) error {
 			}
 			// Fallback: conservative scan of raw body
 			upper := strings.ToUpper(string(body))
-			for _, keyword := range forbiddenKeywordsList {
+			for keyword := range ForbiddenAQLKeywords {
 				if strings.Contains(upper, keyword) {
 					return fmt.Errorf("forbidden keyword %q detected in request body", keyword)
 				}

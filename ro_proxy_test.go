@@ -401,22 +401,6 @@ func TestForbiddenAQLKeywords_TracksAQLWriteOperations(t *testing.T) {
 	}
 }
 
-// TestForbiddenKeywordsList_InSyncWithMap guards against drift between the two
-// independent definitions of the blocklist: the map used on the JSON path and
-// the slice used by the raw-body fallback scan. If they diverge, a keyword
-// blocked on one path could be allowed on the other.
-func TestForbiddenKeywordsList_InSyncWithMap(t *testing.T) {
-	if len(forbiddenKeywordsList) != len(ForbiddenAQLKeywords) {
-		t.Fatalf("forbiddenKeywordsList has %d entries, ForbiddenAQLKeywords has %d",
-			len(forbiddenKeywordsList), len(ForbiddenAQLKeywords))
-	}
-	for _, kw := range forbiddenKeywordsList {
-		if _, ok := ForbiddenAQLKeywords[kw]; !ok {
-			t.Errorf("forbiddenKeywordsList contains %q which is not in ForbiddenAQLKeywords", kw)
-		}
-	}
-}
-
 func TestForbiddenAQLKeywords(t *testing.T) {
 	// Verify the exported map contains all expected keywords
 	expected := []string{"INSERT", "UPDATE", "UPSERT", "REMOVE", "REPLACE", "TRUNCATE", "DROP"}
