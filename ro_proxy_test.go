@@ -296,6 +296,12 @@ func TestAllowReadOnly_POST_Cursor_DuplicateQueryKey(t *testing.T) {
 		`{"query": "INSERT {x:1} INTO coll", "query": "RETURN 1"}`,
 		`{"query": "RETURN 1", "query": "REMOVE doc IN coll"}`,
 		`{"query": "RETURN 1", "bindVars": {}, "query": "RETURN 2"}`,
+		// Case-variant duplicates: Go's json decodes struct tags
+		// case-insensitively (last wins), so these would smuggle a write past
+		// the scanner against a case-sensitive upstream parser.
+		`{"query": "INSERT {x:1} INTO coll", "Query": "RETURN 1"}`,
+		`{"Query": "RETURN 1", "query": "INSERT {x:1} INTO coll"}`,
+		`{"query": "RETURN 1", "QUERY": "REMOVE doc IN coll"}`,
 	}
 
 	for _, body := range bodies {
@@ -339,8 +345,11 @@ func TestCountTopLevelQueryKeys(t *testing.T) {
 		{"single", `{"query": "x"}`, 1, true},
 		{"none", `{"bindVars": {}}`, 0, true},
 		{"duplicate", `{"query": "a", "query": "b"}`, 2, true},
+		{"case variant duplicate", `{"query": "a", "Query": "b"}`, 2, true},
+		{"upper case single", `{"QUERY": "x"}`, 1, true},
 		{"nested only", `{"bindVars": {"query": "x"}}`, 0, true},
 		{"top and nested", `{"query": "a", "options": {"query": "b"}}`, 1, true},
+		{"nested case variant not counted", `{"query": "a", "options": {"Query": "b"}}`, 1, true},
 		{"query as value", `{"name": "query"}`, 0, true},
 		{"not an object", `[1, 2, 3]`, 0, false},
 		{"malformed", `{"query": `, 0, false},

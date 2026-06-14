@@ -108,11 +108,15 @@ func AllowReadOnly(r *http.Request, peek BodyPeeker) error {
 	return fmt.Errorf("method %s not permitted on %s", r.Method, r.URL.Path)
 }
 
-// countTopLevelQueryKeys reports how many times the key "query" appears at the
-// top level of the JSON object in body, and whether body is a JSON object at
-// all. It walks the token stream so that nested "query" keys (e.g. inside
-// bindVars or options) are not counted. ok is false when body is not a JSON
-// object, in which case the caller's fallback scanning applies.
+// countTopLevelQueryKeys reports how many top-level keys of the JSON object in
+// body fold to "query" (case-insensitively), and whether body is a JSON object
+// at all. The match is case-insensitive on purpose: Go's encoding/json resolves
+// struct tags case-insensitively (last value wins), so {"query":...,"Query":...}
+// would feed the scanner one value while a case-sensitive upstream parser
+// executes the other — the same differential a plain duplicate would cause. It
+// walks the token stream so that nested "query" keys (e.g. inside bindVars or
+// options) are not counted. ok is false when body is not a JSON object, in which
+// case the caller's fallback scanning applies.
 func countTopLevelQueryKeys(body []byte) (count int, ok bool) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	tok, err := dec.Token()
@@ -147,7 +151,7 @@ func countTopLevelQueryKeys(body []byte) (count int, ok bool) {
 		}
 		if depth == 1 {
 			if expectKey {
-				if s, isStr := t.(string); isStr && s == "query" {
+				if s, isStr := t.(string); isStr && strings.EqualFold(s, "query") {
 					count++
 				}
 			}
