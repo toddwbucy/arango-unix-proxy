@@ -287,6 +287,127 @@ func TestAllowReadOnly_DatabasePrefix(t *testing.T) {
 	})
 }
 
+func TestAllowReadOnly_POST_Cursor_DuplicateQueryKey(t *testing.T) {
+	// A body with two top-level "query" fields is ambiguous: Go's json keeps
+	// the last value, but the upstream may resolve duplicates differently.
+	// Such bodies must be rejected so a write hidden in the first value cannot
+	// slip past the keyword scan that inspects the second value.
+	bodies := []string{
+		`{"query": "INSERT {x:1} INTO coll", "query": "RETURN 1"}`,
+		`{"query": "RETURN 1", "query": "REMOVE doc IN coll"}`,
+		`{"query": "RETURN 1", "bindVars": {}, "query": "RETURN 2"}`,
+	}
+
+	for _, body := range bodies {
+		t.Run(body, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/_api/cursor", nil)
+			err := AllowReadOnly(req, mockBodyPeeker(body))
+			if err == nil {
+				t.Error("duplicate top-level query key should be rejected")
+			}
+		})
+	}
+}
+
+func TestAllowReadOnly_POST_Cursor_NestedQueryKeyAllowed(t *testing.T) {
+	// A "query" key nested inside another object is not a duplicate of the
+	// top-level query and must not trigger the ambiguity rejection.
+	bodies := []string{
+		`{"query": "FOR doc IN coll RETURN doc", "bindVars": {"query": "value"}}`,
+		`{"query": "FOR doc IN coll RETURN doc", "options": {"x": {"query": "deep"}}}`,
+		`{"query": "FOR doc IN coll RETURN doc", "options": {"fullCount": true}}`,
+	}
+
+	for _, body := range bodies {
+		t.Run(body, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/_api/cursor", nil)
+			err := AllowReadOnly(req, mockBodyPeeker(body))
+			if err != nil {
+				t.Errorf("nested query key should be allowed, got error: %v", err)
+			}
+		})
+	}
+}
+
+func TestCountTopLevelQueryKeys(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		wantCount int
+		wantOK    bool
+	}{
+		{"single", `{"query": "x"}`, 1, true},
+		{"none", `{"bindVars": {}}`, 0, true},
+		{"duplicate", `{"query": "a", "query": "b"}`, 2, true},
+		{"nested only", `{"bindVars": {"query": "x"}}`, 0, true},
+		{"top and nested", `{"query": "a", "options": {"query": "b"}}`, 1, true},
+		{"query as value", `{"name": "query"}`, 0, true},
+		{"not an object", `[1, 2, 3]`, 0, false},
+		{"malformed", `{"query": `, 0, false},
+		{"empty", ``, 0, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			count, ok := countTopLevelQueryKeys([]byte(tc.body))
+			if count != tc.wantCount || ok != tc.wantOK {
+				t.Errorf("countTopLevelQueryKeys(%q) = (%d, %t), want (%d, %t)",
+					tc.body, count, ok, tc.wantCount, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestForbiddenAQLKeywords_TracksAQLWriteOperations documents the security
+// assumption behind the read-only keyword scanner: the blocklist must contain
+// exactly the AQL data-modification operations. AQL can only mutate data
+// through these keywords (see the ArangoDB AQL reference, "Data Modification
+// Queries": INSERT, UPDATE, REPLACE, REMOVE, UPSERT), and the proxy
+// additionally blocks the collection-level TRUNCATE/DROP keywords. If a future
+// ArangoDB version introduces a new write keyword, this test must be updated
+// alongside ForbiddenAQLKeywords — a silently stale list is a read-only bypass.
+func TestForbiddenAQLKeywords_TracksAQLWriteOperations(t *testing.T) {
+	// The canonical set of AQL keywords that can cause a write.
+	canonical := map[string]struct{}{
+		"INSERT":   {}, // data modification
+		"UPDATE":   {}, // data modification
+		"REPLACE":  {}, // data modification
+		"REMOVE":   {}, // data modification
+		"UPSERT":   {}, // data modification
+		"TRUNCATE": {}, // collection-level write
+		"DROP":     {}, // collection-level write
+	}
+
+	for kw := range canonical {
+		if _, ok := ForbiddenAQLKeywords[kw]; !ok {
+			t.Errorf("ForbiddenAQLKeywords is missing write keyword %q", kw)
+		}
+	}
+	for kw := range ForbiddenAQLKeywords {
+		if _, ok := canonical[kw]; !ok {
+			t.Errorf("ForbiddenAQLKeywords contains unexpected keyword %q; "+
+				"if this is a real AQL write keyword, add it to the canonical "+
+				"set in this test", kw)
+		}
+	}
+}
+
+// TestForbiddenKeywordsList_InSyncWithMap guards against drift between the two
+// independent definitions of the blocklist: the map used on the JSON path and
+// the slice used by the raw-body fallback scan. If they diverge, a keyword
+// blocked on one path could be allowed on the other.
+func TestForbiddenKeywordsList_InSyncWithMap(t *testing.T) {
+	if len(forbiddenKeywordsList) != len(ForbiddenAQLKeywords) {
+		t.Fatalf("forbiddenKeywordsList has %d entries, ForbiddenAQLKeywords has %d",
+			len(forbiddenKeywordsList), len(ForbiddenAQLKeywords))
+	}
+	for _, kw := range forbiddenKeywordsList {
+		if _, ok := ForbiddenAQLKeywords[kw]; !ok {
+			t.Errorf("forbiddenKeywordsList contains %q which is not in ForbiddenAQLKeywords", kw)
+		}
+	}
+}
+
 func TestForbiddenAQLKeywords(t *testing.T) {
 	// Verify the exported map contains all expected keywords
 	expected := []string{"INSERT", "UPDATE", "UPSERT", "REMOVE", "REPLACE", "TRUNCATE", "DROP"}

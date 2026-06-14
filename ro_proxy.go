@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -66,6 +67,14 @@ func AllowReadOnly(r *http.Request, peek BodyPeeker) error {
 			if err != nil {
 				return err
 			}
+			// Reject ambiguous bodies with more than one top-level "query"
+			// field. Go's encoding/json keeps the last duplicate key, but
+			// ArangoDB may resolve duplicates differently; inspecting one
+			// value while the upstream executes the other would bypass the
+			// keyword scan below. Refuse rather than guess.
+			if count, ok := countTopLevelQueryKeys(body); ok && count > 1 {
+				return fmt.Errorf("ambiguous request: multiple %q fields in cursor body", "query")
+			}
 			var payload struct {
 				Query string `json:"query"`
 			}
@@ -97,4 +106,53 @@ func AllowReadOnly(r *http.Request, peek BodyPeeker) error {
 		}
 	}
 	return fmt.Errorf("method %s not permitted on %s", r.Method, r.URL.Path)
+}
+
+// countTopLevelQueryKeys reports how many times the key "query" appears at the
+// top level of the JSON object in body, and whether body is a JSON object at
+// all. It walks the token stream so that nested "query" keys (e.g. inside
+// bindVars or options) are not counted. ok is false when body is not a JSON
+// object, in which case the caller's fallback scanning applies.
+func countTopLevelQueryKeys(body []byte) (count int, ok bool) {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	tok, err := dec.Token()
+	if err != nil {
+		return 0, false
+	}
+	if delim, isDelim := tok.(json.Delim); !isDelim || delim != '{' {
+		return 0, false
+	}
+
+	depth := 1        // we have consumed the opening '{'
+	expectKey := true // first token inside the object is a key
+	for depth > 0 {
+		t, err := dec.Token()
+		if err != nil {
+			// Malformed/truncated JSON: let the caller's parser and fallback
+			// scan decide; don't claim a definitive count.
+			return 0, false
+		}
+		if delim, isDelim := t.(json.Delim); isDelim {
+			switch delim {
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+				if depth == 1 {
+					// A nested value just closed; next top-level token is a key.
+					expectKey = true
+				}
+			}
+			continue
+		}
+		if depth == 1 {
+			if expectKey {
+				if s, isStr := t.(string); isStr && s == "query" {
+					count++
+				}
+			}
+			expectKey = !expectKey
+		}
+	}
+	return count, true
 }
