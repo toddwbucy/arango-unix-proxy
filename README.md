@@ -82,6 +82,22 @@ The read-only proxy permits:
 
 Blocked AQL keywords: `INSERT`, `UPDATE`, `UPSERT`, `REMOVE`, `REPLACE`, `TRUNCATE`, `DROP`
 
+#### How the cursor query is inspected
+
+For a `POST` to the cursor API, the proxy reads up to 128 KB of the request
+body and extracts the JSON `query` field, then tokenizes it and rejects the
+request if any token matches a blocked keyword (case-insensitively). If the
+body is not valid JSON, it falls back to a conservative substring scan of the
+raw body. A body larger than the 128 KB inspection limit is rejected outright.
+
+To prevent **parser-differential write smuggling**, a cursor body is rejected
+when it contains more than one top-level `query` key — including case variants
+such as `query` together with `Query`. Go's JSON decoder collapses such keys
+to a single value (last one wins), but a case-sensitive upstream parser may
+execute a different one; refusing the ambiguous request closes that gap. A
+`query` key nested inside another field (for example `bindVars` or `options`)
+is unaffected.
+
 Socket permissions: `0640` (owner read/write, group read)
 
 ### Read-Write Proxy (rwproxy)
